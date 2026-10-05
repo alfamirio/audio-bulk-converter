@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Bulk Audio Converter</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body{background:#111318;color:#e2e4e9;font-size:15px}
+  .card{background:#1c1f26;border-color:#343840}
+  .form-control,.form-select{background-color:#252830;border-color:#343840}
+  .form-label{font-size:.85rem;font-weight:700;margin-bottom:.25rem}
+  #drop{border:2px dashed #343840;border-radius:10px;background:#1c1f26;color:#8b8f9a;text-align:center;padding:1.6rem 1rem;cursor:pointer}
+  #drop:hover,#drop.over{border-color:#4c6ef5;color:#e2e4e9}
+  audio{height:34px}
+  fieldset{border:0;padding:0;margin:0;min-width:0}
+</style>
+</head>
+<body>
+
+<nav class="navbar bg-black border-bottom border-secondary-subtle py-1">
+  <div class="container-xxl d-flex flex-wrap gap-2 justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <span class="fw-bold">🎧 AudioConverter</span>
+      <span class="text-secondary small d-none d-md-inline">| Local Processing · ffmpeg.wasm</span>
+      <button class="btn btn-danger btn-sm py-0" id="reset" title="Reset configuration">🗑</button>
+    </div>
+    <div id="stats" class="d-none small fw-bold gap-3 flex-wrap">
+      <span class="text-info"><span id="sB">0 B</span> - <span id="sA">0 B</span> - <span id="sP">0%</span></span>
+      <span>Remaining: <span id="nR">0</span></span>
+      <span class="text-success">Success: <span id="nS">0</span></span>
+      <span class="text-danger">Errors: <span id="nE">0</span></span>
+      <span class="text-warning">Time: <span id="nT">0.0s</span></span>
+    </div>
+  </div>
+</nav>
+
+<div class="container-xxl mt-2">
+  <fieldset id="fs">
+  <div class="card p-2">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label" for="inp">Select Audio</label>
+        <input type="file" id="inp" class="form-control form-control-sm" multiple accept="audio/*,.mp3,.ogg,.oga,.opus,.aac,.m4a,.wav,.flac">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label" for="fmt">Convert To</label>
+        <select id="fmt" class="form-select form-select-sm">
+          <option value="mp3">MP3</option>
+          <option value="ogg">OGG (Vorbis)</option>
+          <option value="opus" selected>Opus (.opus)</option>
+          <option value="aac">AAC (.m4a)</option>
+          <option value="wav">WAV (PCM 16-bit)</option>
+          <option value="flac">FLAC (Lossless)</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label" for="q">Quality</label>
+        <select id="q" class="form-select form-select-sm" title="Target bitrate for MP3, AAC, Opus and Vorbis."></select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label" for="spd">Encoder Effort</label>
+        <select id="spd" class="form-select form-select-sm">
+          <option value="0">0 - Instant</option>
+          <option value="1">1 - Very Fast</option>
+          <option value="2" selected>2 - Balanced</option>
+          <option value="3">3 - Slow</option>
+          <option value="4">4 - Max Compression</option>
+        </select>
+      </div>
+      <div class="col-md-1">
+        <label class="form-label" for="thr" title="Each thread loads its own ffmpeg instance (uses more RAM)">Threads</label>
+        <select id="thr" class="form-select form-select-sm"></select>
+      </div>
+      <div class="col-md-2 d-flex gap-1">
+        <button id="go" class="btn btn-primary btn-sm flex-grow-1" disabled>Convert</button>
+        <button id="zip" class="btn btn-outline-success btn-sm d-none">ZIP</button>
+      </div>
+    </div>
+
+    <div class="row g-2 align-items-end border-top mt-2 pt-2">
+      <div class="col-md-2">
+        <label class="form-label" for="sr">Sample Rate</label>
+        <select id="sr" class="form-select form-select-sm">
+          <option value="0">Original</option>
+          <option>48000</option><option>44100</option><option>32000</option>
+          <option>24000</option><option>16000</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label" for="ch">Channels</label>
+        <select id="ch" class="form-select form-select-sm">
+          <option value="0">Original</option><option value="1">Mono</option><option value="2">Stereo</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label" for="tempo" title="Changes playback speed without changing pitch">Speed</label>
+        <select id="tempo" class="form-select form-select-sm">
+          <option value="1" selected>x1</option>
+          <option value="1.25">x1.25</option>
+          <option value="1.5">x1.5</option>
+          <option value="1.75">x1.75</option>
+          <option value="2">x2</option>
+          <option value="2.5">x2.5</option>
+          <option value="3">x3</option>
+        </select>
+      </div>
+      <div class="col-md-auto d-flex flex-column gap-1 pb-1">
+        <div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="norm"><label class="form-check-label small" for="norm" title="EBU R128 loudness normalization (-16 LUFS)">Normalize</label></div>
+        <div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="strip"><label class="form-check-label small" for="strip">Strip metadata</label></div>
+      </div>
+      <div class="col-md-auto ms-auto">
+        <label class="form-label d-block">Max File Size <span class="text-secondary fw-normal small" id="mh"></span></label>
+        <div class="d-flex align-items-center gap-1 flex-wrap" id="pills">
+          <button class="btn btn-outline-secondary btn-sm py-0" data-b="0">None</button>
+          <button class="btn btn-outline-secondary btn-sm py-0" data-b="524288">512 KiB</button>
+          <button class="btn btn-outline-secondary btn-sm py-0" data-b="1048576">1 MiB</button>
+          <button class="btn btn-outline-secondary btn-sm py-0" data-b="2097152">2 MiB</button>
+          <button class="btn btn-outline-secondary btn-sm py-0" data-b="5242880">5 MiB</button>
+          <button class="btn btn-outline-secondary btn-sm py-0" data-b="10485760">10 MiB</button>
+          <input type="number" id="cust" class="form-control form-control-sm" style="width:80px" min="1" placeholder="KiB">
+        </div>
+      </div>
+    </div>
+    <div id="msg" class="small text-center mt-1 text-secondary"></div>
+  </div>
+  </fieldset>
+
+  <div id="drop" class="mt-1">Drag &amp; drop audio files here — or click to browse<br><span class="small">MP3 · OGG · AAC · Opus · WAV · FLAC</span></div>
+  <div id="grid" class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-2 mt-1"></div>
+</div>
+
+<!-- ffmpeg worker: loads ffmpeg-core.js / ffmpeg-core.wasm from core/ (single-thread build) -->
+<script id="wk" type="text/plain">
+let C, logs = [], cfg, dead = false;
+const boot = async () => { C = await self.createFFmpegCore(cfg); C.setLogger(m => logs.push(m.message)); dead = false; };
+const parse = () => {
+  const L = logs.join('\n'),
+    du = L.match(/Duration: (\d+):(\d+):([\d.]+)/),
+    au = L.match(/Audio: (\w+)[^,\n]*, (\d+) Hz, ([^,\n]+)/),
+    bi = L.match(/bitrate: (\d+) kb/);
+  return {dur: du ? +du[1]*3600 + du[2]*60 + +du[3] : 0, codec: au && au[1],
+          hz: au ? +au[2] : 0, ch: au && au[3].trim(), kbps: bi ? +bi[1] : 0};
+};
+onmessage = async ({data: d}) => {
+  try {
+    if (d.t === 'load') {
+      try { importScripts(d.js); } catch (e) { self.createFFmpegCore = (await import(d.js)).default; }
+      cfg = {
+        locateFile: p => /\.wasm$/.test(p) ? d.wasm : p,
+        mainScriptUrlOrBlob: d.js + '#' + btoa(JSON.stringify({wasmURL: d.wasm}))
+      };
+      await boot();
+      return postMessage({t: 'ready'});
+    }
+    const ex = a => {
+      logs = [];
+      try { C.exec(...a.map(String)); const r = C.ret; C.reset(); if (logs.some(l => /^Aborted\(/.test(l))) dead = true; return r; }
+      catch (e) { logs.push('Aborted() ' + (e.message || e)); dead = true; return -1; }
+    };
+    if (d.t === 'probe') {                                  // metadata only, no conversion
+      const pn = 'probe.' + d.ext;
+      C.FS.writeFile(pn, new Uint8Array(d.data));
+      try { ex(['-hide_banner', '-i', pn]); const meta = parse(); if (dead) await boot(); return postMessage({t: 'probed', meta}); }
+      finally { try { C.FS.unlink(pn); } catch (e) {} }
+    }
+    const inN = 'in.' + d.ext, outN = 'out.' + d.oext, bytes = new Uint8Array(d.data);
+    C.FS.writeFile(inN, bytes);
+    // A failed ffmpeg run can abort the wasm instance; rebuild it so later files still work.
+    const recover = async () => { if (dead) { await boot(); C.FS.writeFile(inN, bytes); } };
+    try {
+      ex(['-hide_banner', '-i', inN]);                       // probe (errors by design, logs have the info)
+      await recover();
+      const meta = parse();
+      let ar = d.ar || (d.norm ? meta.hz || 44100 : 0);       // loudnorm upsamples to 192k otherwise
+      if (ar && d.opus) ar = [8e3, 12e3, 16e3, 24e3, 48e3].find(r => r >= ar) || 48e3;
+      // Encoder-open failures (rate/channel/bitrate combo the encoder rejects) are retried with safer settings.
+      const safeRate = d.opus ? 48000 : 44100;
+      const safeArgs = a => {
+        const o = [];
+        for (let i = 0; i < a.length; i++) { if (a[i] === '-b:a' || a[i] === '-q:a') i++; else o.push(a[i]); }
+        const vorbis = a.includes('libvorbis'), hasRate = a.includes('-b:a') || a.includes('-q:a');
+        return hasRate ? [...o, ...(vorbis ? ['-q:a', '4'] : ['-b:a', '128k'])] : a;
+      };
+      const run = async a => {
+        // libvorbis (ABR) rejects very low bitrates at high sample rates (e.g. 32k at 44.1/48 kHz stereo).
+        // Step the sample rate down and keep the requested bitrate before falling back to the safe defaults.
+        const cur = ar || meta.hz || 48000,
+          low = a.includes('libvorbis') ? [32000, 24000, 22050, 16000].filter(r => r < cur).map(r => [a, ['-ar', '' + r]]) : [];
+        // MP3 below 32 kbps only exists in MPEG-2 (<= 24 kHz); at higher rates lame silently bumps the bitrate up to 32k
+        const mp3k = a.includes('libmp3lame') ? parseInt(a[a.indexOf('-b:a') + 1]) : 0,
+          first = mp3k && mp3k < 32 && cur > 24000 ? ['-ar', '24000'] : [];
+        const tries = [[a, first], ...low, [a, ['-ar', '' + safeRate]], [a, ['-ar', '' + safeRate, '-ac', '2']],
+                       [safeArgs(a), ['-ar', '' + safeRate, '-ac', '2']]];
+        let err = '';
+        for (let k = 0; k < tries.length; k++) {
+          const [args, over] = tries[k];
+          const r = ex(['-hide_banner', '-y', '-i', inN, ...d.pre, ...(ar ? ['-ar', '' + ar] : []), ...args, ...over, outN]);
+          if (r === 0) return {out: C.FS.readFile(outN), fb: k || (first.length ? 1 : 0)};   // first.length: sample rate was lowered up front
+          const enc = /opening encoder|initializing output stream/i.test(logs.join('\n'));
+          err = logs.filter(l => /error|invalid|unsupported|not supported|failed/i.test(l)).slice(-3).join(' | ') || logs.slice(-3).join(' | ');
+          await recover();
+          if (!enc) break;
+        }
+        throw Error(err);
+      };
+      let out, used = 0, fb = 0;
+      if (d.tpl && meta.dur > 0) {                            // Max file size: compute bitrate from duration, verify, refine
+        let br = Math.min(d.hi, Math.max(d.lo, Math.floor(d.max * 8 / (meta.dur / (d.sp || 1)) / 1000 * .96)));
+        for (let k = 0; k < 4; k++) {
+          ({out, fb} = await run(d.tpl.map(s => String(s).replace('@K', br)))); used = br;
+          if (out.length <= d.max || br <= d.lo) break;
+          br = Math.max(d.lo, Math.floor(br * d.max / out.length * .95));
+        }
+      } else ({out, fb} = await run(d.args));
+      const buf = out.buffer.byteLength === out.length ? out.buffer : out.slice().buffer;
+      ex(['-hide_banner', '-i', outN]);                      // probe the output for the card's "new format" line
+      const om = parse();
+      if (!om.kbps && om.dur) om.kbps = Math.round(out.length * 8 / om.dur / 1000);
+      await recover();
+      postMessage({t: 'done', buf, meta, om, used, fb}, [buf]);
+    } finally {
+      try { C.FS.unlink(inN); } catch (e) {}
+      try { C.FS.unlink(outN); } catch (e) {}
+    }
+  } catch (e) { postMessage({t: 'err', e: e.message || String(e)}); }
+};
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const CORE_JS = 'core/ffmpeg-core.js', CORE_WASM = 'core/ffmpeg-core.wasm';
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => '&#' + c.charCodeAt(0) + ';');
+const abs = u => new URL(u, location.href).href;
+const fmtB = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KiB' : (b / 1048576).toFixed(2) + ' MiB';
+const info = x => [x.codec, x.kbps && x.kbps + ' kb/s', x.hz && x.hz + ' Hz', x.ch, fmtT(x.dur)];
+const fmtT = s => s > 0 && isFinite(s) ? Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0') : '…';
+
+// key, label, kbps (used as-is by MP3/AAC/Opus/Vorbis); last two columns are no longer used
+const P = [
+  ['q100','Maximum — 320 kbps',320,256,9], ['q95','Q95 — 256 kbps',256,224,8], ['q90','Q90 — 224 kbps',224,192,7],
+  ['q85','High — 192 kbps',192,160,6],     ['q80','Q80 — 160 kbps',160,128,5], ['q75','Standard — 128 kbps',128,96,4],
+  ['q70','Q70 — 112 kbps',112,80,3],       ['q65','Medium — 96 kbps',96,64,2], ['q60','Q60 — 80 kbps',80,56,1],
+  ['q55','Low — 64 kbps',64,48,0],         ['q50','Q50 — 48 kbps',48,32,-1],   ['q45','Draft — 32 kbps',32,24,-1],
+  ['q40','Minimum — 24 kbps',24,24,-1]
+];
+// a(preset, k): encoder args (k = explicit kbps or '@K' placeholder); e(effort): effort args; lo/hi: bitrate range
+const aacA = (p, k) => ['-c:a', 'aac', '-b:a', (k || p[2]) + 'k'];
+const F = {
+  mp3:  {qmin:24, x:'mp3',  m:'audio/mpeg', lo:8,  hi:320, a:(p,k)=>['-c:a','libmp3lame','-b:a',(k||p[2])+'k'], e:s=>['-compression_level',[9,7,5,2,0][s]]},
+  ogg:  {qmin:24, x:'ogg',  m:'audio/ogg',  lo:32, hi:256, a:(p,k)=>['-c:a','libvorbis','-b:a',(k||p[2])+'k']},
+  opus: {qmin:24, x:'opus', m:'audio/ogg',  lo:6,  hi:256, a:(p,k)=>['-c:a','libopus','-b:a',(k||p[2])+'k'], e:s=>['-compression_level',[0,3,6,9,10][s]]},
+  aac:  {qmin:24, x:'m4a',  m:'audio/mp4',  lo:16, hi:320, a:aacA},
+  wav:  {x:'wav',  m:'audio/wav',  a:()=>['-c:a','pcm_s16le']},
+  flac: {x:'flac', m:'audio/flac', a:()=>['-c:a','flac'], e:s=>['-compression_level',[0,2,5,8,12][s]]}
+};
+
+let files = [], urls = [], outs = [], workers = [], busy = false, maxB = 0;
+const S = {ok:0, er:0, rem:0, b:0, a:0, t0:0, iv:0};
+
+// ── Controls & persistence ───────────────────────────────────────────────
+$('q').innerHTML = P.map(p => `<option value="${p[0]}">${p[1]}</option>`).join('');
+const cores = navigator.hardwareConcurrency || 4;
+$('thr').innerHTML = [1,2,3,4,6,8].filter(n => n <= Math.max(cores, 2)).map(n => `<option>${n}</option>`).join('');
+$('q').value = 'q65'; $('thr').value = '2'; $('fmt').value = 'opus';
+['fmt','q','spd','thr','sr','ch','tempo','norm','strip'].forEach(id => {
+  const e = $(id), k = 'au_' + id, v = localStorage.getItem(k), chk = e.type === 'checkbox';
+  if (v !== null) { if (chk) e.checked = v === '1'; else e.value = v; }
+  e.addEventListener('change', () => {
+    localStorage.setItem(k, chk ? +e.checked : e.value);
+    ui(); resetState(); if (id === 'thr') warm();
+  });
+});
+function fixSaved() { if (![...$('tempo').options].some(o => o.value === $('tempo').value)) $('tempo').value = '1';   if (![...$('sr').options].some(o => o.value === $('sr').value)) $('sr').value = '0';  if (!F[$('fmt').value]) $('fmt').value = 'opus'; if (!P.some(p => p[0] === $('q').value)) $('q').value = 'q65'; }
+fixSaved();
+function ui() {
+  const f = F[$('fmt').value], q = $('q'), cur = q.value, min = f.qmin || 0, ok = P.filter(p => p[2] >= min), sig = ok.length;
+  if (q.dataset.sig !== '' + sig) {                       // 24 kbps is only offered for Opus
+    q.innerHTML = ok.map(p => `<option value="${p[0]}">${p[1]}</option>`).join('');
+    q.dataset.sig = sig;
+  }
+  q.value = ok.some(p => p[0] === cur) ? cur : ok[ok.length - 1][0];
+  q.disabled = !f.lo; $('spd').disabled = !f.e;
+}
+
+function setMax(b, fromInput) {
+  maxB = b; localStorage.setItem('au_max', b);
+  document.querySelectorAll('[data-b]').forEach(x => x.classList.toggle('active', +x.dataset.b === b));
+  if (!fromInput) $('cust').value = '';
+  $('mh').textContent = b ? '— bitrate is chosen so the output is ≤ ' + fmtB(b) + ' (lossy formats)' : '';
+  resetState();
+}
+$('pills').addEventListener('click', e => { const b = e.target.closest('button[data-b]'); if (b) setMax(+b.dataset.b); });
+$('cust').addEventListener('input', () => { const v = parseFloat($('cust').value); setMax(v > 0 ? Math.max(1, Math.round(v * 1024)) : 0, true); });
+$('reset').onclick = () => { Object.keys(localStorage).filter(k => k.startsWith('au_')).forEach(k => localStorage.removeItem(k)); location.reload(); };
+
+// ── ffmpeg worker pool (persistent: core is compiled once per worker) ───────
+function spawn() {
+  const w = new Worker(URL.createObjectURL(new Blob([$('wk').textContent])));
+  w.ready = new Promise((res, rej) => {
+    w.onmessage = e => e.data.t === 'ready' ? res() : rej(Error(e.data.e));
+    w.onerror = e => rej(Error(e.message || 'worker error'));
+  });
+  w.ready.catch(() => {});
+  w.postMessage({t: 'load', js: abs(CORE_JS), wasm: abs(CORE_WASM)});
+  return w;
+}
+function ensure(n) {
+  while (workers.length < n) workers.push(spawn());
+  while (workers.length > n) workers.pop().terminate();
+  return workers.slice(0, n);
+}
+const call = (w, m, tr) => new Promise((res, rej) => {
+  w.onmessage = e => e.data.t === 'err' ? rej(Error(e.data.e)) : res(e.data);
+  w.onerror = e => { const x = Error(e.message || 'worker crashed'); x.fatal = 1; rej(x); };
+  w.postMessage(m, tr);
+});
+async function loaded(ws) {
+  say('Loading ffmpeg core…');
+  try { await Promise.all(ws.map(w => w.ready)); say(''); return true; }
+  catch (e) { say(`Could not load ${CORE_JS} / ${CORE_WASM}: ${e.message}. Serve this page over http(s) (not file://) with the core/ folder next to it.`, 1); return false; }
+}
+function warm() { if (files.length) loaded(ensure(Math.min(+$('thr').value, files.length))); }
+function say(t, err) { $('msg').textContent = t; $('msg').className = 'small text-center mt-1 ' + (err ? 'text-danger' : 'text-secondary'); }
+
+// format badges: each format has its own colour
+const FCOL = {mp3:'#dc3545', ogg:'#fd7e14', oga:'#fd7e14', opus:'#198754', aac:'#0d6efd', m4a:'#0d6efd', wav:'#6f42c1', flac:'#0f8b8d'};
+const fbadge = e => { e = (e || '').toLowerCase(); return `<span class="badge text-uppercase" style="background:${FCOL[e] || '#6c757d'}">${esc(e)}</span>`; };
+const inExt = i => files[i].name.split('.').pop();
+
+// ── Files & cards ──────────────────────────────────────────────────────────
+function add(list) {
+  const fl = [...list].filter(f => /\.(mp3|ogg|oga|opus|aac|m4a|wav|flac)$/i.test(f.name) || f.type.startsWith('audio/'));
+  if (!fl.length) return;
+  urls.forEach(u => URL.revokeObjectURL(u)); outs.forEach(o => o && URL.revokeObjectURL(o.url));
+  files = fl; outs = []; urls = fl.map(f => URL.createObjectURL(f));
+  $('grid').innerHTML = fl.map((f, i) => `
+    <div class="col"><div class="card h-100 p-2">
+      <div class="d-flex justify-content-between gap-2">
+        <b class="text-truncate" title="${esc(f.name)}">${esc(f.name)}</b>
+        <span class="text-nowrap flex-shrink-0" id="bd${i}">${fbadge(f.name.split('.').pop())}</span>
+      </div>
+      <div class="small text-secondary" id="mt${i}">…</div>
+      <div class="small text-secondary" id="mo${i}"></div>
+      <div class="small" id="sz${i}">${fmtB(f.size)}</div>
+      <audio id="au${i}" controls preload="metadata" class="w-100 my-1" src="${urls[i]}"></audio>
+      <div id="st${i}" class="mb-1"></div>
+      <div class="d-flex flex-wrap gap-1 d-none" id="ac${i}">
+        <button class="btn btn-outline-secondary btn-sm" data-ab="a" data-i="${i}">Original</button>
+        <button class="btn btn-outline-secondary btn-sm" data-ab="b" data-i="${i}">Converted</button>
+        <a class="btn btn-success btn-sm flex-grow-1" id="dl${i}" download>Download</a>
+      </div>
+    </div></div>`).join('');
+  fl.forEach((_, i) => { setSt(i, 'w'); $('au' + i).addEventListener('loadedmetadata', e => { if (!outs[i] && !$('mt' + i).dataset.base) $('mt' + i).textContent = fmtT(e.target.duration); }); });
+  $('drop').classList.add('d-none'); $('go').disabled = false; $('zip').classList.add('d-none'); $('stats').classList.add('d-none');
+  warm(); probeAll();
+}
+$('inp').onchange = e => add(e.target.files);
+$('drop').onclick = () => $('inp').click();
+document.body.addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('over'); });
+document.body.addEventListener('dragleave', e => { if (!e.relatedTarget) $('drop').classList.remove('over'); });
+document.body.addEventListener('drop', e => { e.preventDefault(); $('drop').classList.remove('over'); if (!busy) add(e.dataTransfer.files); });
+
+// Probe every file (codec, bitrate, sample rate, channels, duration) before conversion
+let probeGen = 0, probing = Promise.resolve();
+function probeAll() {
+  const gen = ++probeGen, fl = files, prev = probing;
+  probing = (async () => {
+    await prev.catch(() => {});
+    const w = workers[0];
+    try { await w.ready; } catch (e) { return; }
+    for (let i = 0; i < fl.length; i++) {
+      if (gen !== probeGen) return;
+      try {
+        const data = await fl[i].arrayBuffer();
+        const ext = (fl[i].name.split('.').pop() || 'bin').replace(/\W/g, '') || 'bin';
+        const r = await call(w, {t: 'probe', ext, data}, [data]);
+        if (gen !== probeGen) return;
+        const base = info(r.meta).filter(Boolean).join(' · ') + ' · ' + fmtB(fl[i].size);
+        $('mt' + i).dataset.base = base;
+        if (!outs[i]) $('mt' + i).textContent = base;
+      } catch (e) { if (e.fatal) return; }
+    }
+  })();
+}
+
+// A/B listening: swap source keeping position and play state
+$('grid').addEventListener('click', e => {
+  const b = e.target.closest('[data-ab]'); if (!b) return;
+  const i = b.dataset.i, a = $('au' + i), t = a.currentTime, pl = !a.paused;
+  a.src = b.dataset.ab === 'b' ? outs[i].url : urls[i];
+  a.onloadedmetadata = () => { a.currentTime = t; if (pl) a.play(); };
+});
+
+function setSt(i, k, t) {
+  $('st' + i).innerHTML = k === 'w' ? '<span class="badge bg-secondary">Waiting</span>'
+    : k === 'p' ? '<div class="spinner-border spinner-border-sm text-primary"></div>'
+    : k === 'e' ? `<span class="badge bg-danger">Error</span> <span class="small text-danger">${esc(t || '')}</span>` : t;
+}
+function resetState() {
+  if (busy) return;
+  outs.forEach(o => o && URL.revokeObjectURL(o.url)); outs = [];
+  clearInterval(S.iv); $('zip').classList.add('d-none'); $('stats').classList.add('d-none');
+  files.forEach((f, i) => {
+    setSt(i, 'w'); $('ac' + i).classList.add('d-none'); $('sz' + i).textContent = fmtB(f.size);
+    $('mo' + i).textContent = ''; $('bd' + i).innerHTML = fbadge(inExt(i));
+    if ($('mt' + i).dataset.base) $('mt' + i).textContent = $('mt' + i).dataset.base;
+    const a = $('au' + i); if (a.src !== urls[i]) a.src = urls[i];
+  });
+}
+function stat() {
+  $('nS').textContent = S.ok; $('nE').textContent = S.er; $('nR').textContent = S.rem;
+  $('sB').textContent = fmtB(S.b); $('sA').textContent = fmtB(S.a);
+  $('sP').textContent = S.b ? Math.round(S.a / S.b * 100) + '%' : '0%';
+}
+
+// ── Conversion ───────────────────────────────────────────────────────────────
+function finish(i, r, t0, f) {
+  const file = files[i], blob = new Blob([r.buf], {type: f.m}), m = r.meta,
+        name = file.name.replace(/\.[^.]+$/, '') + '.' + f.x, url = URL.createObjectURL(blob),
+        pc = Math.round(blob.size / file.size * 100), big = pc > 100;
+  outs[i] = {name, blob, url}; S.b += file.size; S.a += blob.size;
+  const base = info(m).filter(Boolean).join(' · ') + ' · ' + fmtB(file.size);
+  $('mt' + i).dataset.base = base;
+  $('bd' + i).innerHTML = fbadge(inExt(i)) + ' <span class="text-secondary">→</span> ' + fbadge(f.x);
+  $('mt' + i).textContent = base + ' →';
+  $('mo' + i).textContent = [...info(r.om || {}), fmtB(blob.size)].filter(Boolean).join(' · ');
+  $('sz' + i).innerHTML = `${fmtB(file.size)} → <b class="${big ? 'text-danger' : 'text-success'}">${fmtB(blob.size)}</b>`;
+  setSt(i, 'd', `<span class="badge bg-primary">${((performance.now() - t0) / 1000).toFixed(2)}s</span> ` +
+    `<span class="badge ${big ? 'bg-danger' : 'bg-success'}">${pc}%</span>` +
+    (r.used ? ` <span class="badge bg-secondary">~${r.used}k</span>` : '') +
+    (r.fb ? ` <span class="badge bg-info text-dark" title="The encoder cannot produce the chosen settings as-is, so sample rate, channels or bitrate were adjusted automatically (see the output info line)">adjusted</span>` : '') +
+    (maxB && blob.size > maxB ? ' <span class="badge bg-warning text-dark">over limit</span>' : ''));
+  const a = $('dl' + i); a.href = url; a.download = name; $('ac' + i).classList.remove('d-none');
+}
+
+$('go').onclick = async () => {
+  if (busy || !files.length) return;
+  probeGen++; resetState(); busy = true; $('fs').disabled = true;
+  await probing;
+  const key = $('fmt').value, f = F[key], p = P.find(x => x[0] === $('q').value), spd = (v => Number.isInteger(v) && v >= 0 && v <= 4 ? v : 2)(parseInt($('spd').value, 10)),
+        eff = f.e ? f.e(spd) : [];
+  if ($('spd').value !== '' + spd) $('spd').value = '' + spd;   // repair a stale/invalid saved value
+  const pre = ['-vn'];
+  if ($('strip').checked) pre.push('-map_metadata', '-1');
+  if ($('ch').value !== '0') pre.push('-ac', $('ch').value);
+  // Audio filters: speed (pitch-preserving atempo, chained since each stage is safest within 0.5–2) then loudness normalization
+  const sp = +$('tempo').value || 1, af = [];
+  if (sp !== 1) { let r = sp; while (r > 2) { af.push('atempo=2'); r /= 2; } af.push('atempo=' + +r.toFixed(4)); }
+  if ($('norm').checked) af.push('loudnorm=I=-16:TP=-1.5:LRA=11');
+  if (af.length) pre.push('-af', af.join(','));
+  const job = {oext: f.x, pre, sp, ar: +$('sr').value, norm: $('norm').checked, opus: key === 'opus',
+    args: [...f.a(p), ...eff], tpl: f.lo && maxB ? [...f.a(p, '@K'), ...eff] : null, lo: f.lo, hi: f.hi, max: maxB};
+
+  Object.assign(S, {ok: 0, er: 0, rem: files.length, b: 0, a: 0, t0: performance.now()}); stat();
+  $('stats').classList.remove('d-none'); $('stats').classList.add('d-flex');
+  S.iv = setInterval(() => $('nT').textContent = ((performance.now() - S.t0) / 1000).toFixed(1) + 's', 100);
+
+  const ws = ensure(Math.min(+$('thr').value, files.length)), queue = files.map((_, i) => i);
+  if (await loaded(ws)) {
+    await Promise.all(ws.map(async (w, k) => {
+      while (queue.length) {
+        const i = queue.shift(), t0 = performance.now(); setSt(i, 'p');
+        try {
+          const data = await files[i].arrayBuffer();
+          const ext = (files[i].name.split('.').pop() || 'bin').replace(/\W/g, '') || 'bin';
+          finish(i, await call(w, {t: 'run', ...job, ext, data}, [data]), t0, f); S.ok++;
+        } catch (e) {
+          setSt(i, 'e', e.message); S.er++;
+          if (e.fatal) { w.terminate(); w = workers[workers.indexOf(w)] = spawn(); await w.ready.catch(() => {}); }
+        }
+        S.rem--; stat();
+      }
+    }));
+  } else { files.forEach((_, i) => setSt(i, 'e', 'ffmpeg core not loaded')); S.er = files.length; S.rem = 0; stat(); }
+
+  clearInterval(S.iv); $('nT').textContent = ((performance.now() - S.t0) / 1000).toFixed(2) + 's';
+  busy = false; $('fs').disabled = false;
+  if (outs.some(Boolean)) $('zip').classList.remove('d-none');
+};
+
+$('zip').onclick = async () => {
+  const z = new JSZip(), seen = {};
+  outs.filter(Boolean).forEach(o => {
+    let n = o.name; for (let k = 1; seen[n]; k++) n = o.name.replace(/(\.\w+)$/, ` (${k})$1`);
+    seen[n] = 1; z.file(n, o.blob);
+  });
+  const url = URL.createObjectURL(await z.generateAsync({type: 'blob'}));
+  Object.assign(document.createElement('a'), {href: url, download: 'converted_audio.zip'}).click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+ui(); setMax(+localStorage.getItem('au_max') || 0);
+</script>
+</body>
+</html>
