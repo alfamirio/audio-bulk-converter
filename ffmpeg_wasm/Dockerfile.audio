@@ -1,0 +1,110 @@
+# syntax=docker/dockerfile-upstream:master-labs
+#
+# Core de ffmpeg.wasm SOLO AUDIO (mp3, ogg/vorbis, opus, aac nativo).
+# Basado en el Dockerfile oficial de ffmpegwasm/ffmpeg.wasm (FFmpeg n5.1.4).
+# Debe colocarse en la raíz del repositorio clonado (junto a build/ y src/).
+#
+# Parámetros que puedes cambiar con --build-arg para probar combinaciones:
+#   EMSDK_VERSION      versión de Emscripten            (def. 3.1.40)
+#   EXTRA_CFLAGS       flags de compilación             (def. "-O3 -msimd128")
+#   OPUS_REPO          repositorio de libopus           (def. fork de ffmpegwasm)
+#   OPUS_BRANCH        tag de libopus                   (def. v1.3.1)
+#   FFMPEG_TRIM_FLAGS  recorte de encoders/muxers       (pasa "" si configure falla)
+
+ARG EMSDK_VERSION=3.1.40
+
+# ---------------------------------------------------------------- base
+FROM emscripten/emsdk:${EMSDK_VERSION} AS emsdk-base
+ARG EXTRA_CFLAGS="-O3 -msimd128"
+ARG EXTRA_LDFLAGS
+ARG FFMPEG_ST=yes
+ARG FFMPEG_MT
+ENV INSTALL_DIR=/opt
+# fftools de ffmpeg.wasm está portado de FFmpeg n5.1.4: no subir esta versión.
+ENV FFMPEG_VERSION=n5.1.4
+ENV CFLAGS="-I$INSTALL_DIR/include $CFLAGS $EXTRA_CFLAGS"
+ENV CXXFLAGS="$CFLAGS"
+ENV LDFLAGS="-L$INSTALL_DIR/lib $LDFLAGS $CFLAGS $EXTRA_LDFLAGS"
+ENV EM_PKG_CONFIG_PATH=$EM_PKG_CONFIG_PATH:$INSTALL_DIR/lib/pkgconfig:/emsdk/upstream/emscripten/system/lib/pkgconfig
+ENV EM_TOOLCHAIN_FILE=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake
+ENV PKG_CONFIG_PATH=$PKG_CONFIG_PATH:$EM_PKG_CONFIG_PATH
+ENV FFMPEG_ST=$FFMPEG_ST
+ENV FFMPEG_MT=$FFMPEG_MT
+RUN apt-get update && \
+      apt-get install -y pkg-config autoconf automake libtool ragel wget
+
+# ---------------------------------------------------------------- libs
+FROM emsdk-base AS lame-builder
+ENV LAME_BRANCH=master
+ADD https://github.com/ffmpegwasm/lame.git#$LAME_BRANCH /src
+COPY build/lame.sh /src/build.sh
+RUN bash -x /src/build.sh
+
+FROM emsdk-base AS ogg-builder
+ENV OGG_BRANCH=v1.3.4
+ADD https://github.com/ffmpegwasm/Ogg.git#$OGG_BRANCH /src
+COPY build/ogg.sh /src/build.sh
+RUN bash -x /src/build.sh
+
+FROM emsdk-base AS opus-builder
+ARG OPUS_REPO=https://github.com/ffmpegwasm/opus.git
+ARG OPUS_BRANCH=v1.3.1
+ADD ${OPUS_REPO}#${OPUS_BRANCH} /src
+COPY build/opus.sh /src/build.sh
+RUN bash -x /src/build.sh
+
+FROM emsdk-base AS vorbis-builder
+COPY --from=ogg-builder $INSTALL_DIR $INSTALL_DIR
+ENV VORBIS_BRANCH=v1.3.3
+ADD https://github.com/ffmpegwasm/vorbis.git#$VORBIS_BRANCH /src
+COPY build/vorbis.sh /src/build.sh
+RUN bash -x /src/build.sh
+
+FROM emsdk-base AS zlib-builder
+ENV ZLIB_BRANCH=v1.2.11
+ADD https://github.com/ffmpegwasm/zlib.git#$ZLIB_BRANCH /src
+COPY build/zlib.sh /src/build.sh
+RUN bash -x /src/build.sh
+
+# ---------------------------------------------------------------- ffmpeg
+FROM emsdk-base AS ffmpeg-base
+RUN embuilder build sdl2 sdl2-mt
+ADD https://github.com/FFmpeg/FFmpeg.git#$FFMPEG_VERSION /src
+COPY --from=lame-builder $INSTALL_DIR $INSTALL_DIR
+COPY --from=opus-builder $INSTALL_DIR $INSTALL_DIR
+COPY --from=vorbis-builder $INSTALL_DIR $INSTALL_DIR
+COPY --from=zlib-builder $INSTALL_DIR $INSTALL_DIR
+
+FROM ffmpeg-base AS ffmpeg-builder
+ARG FFMPEG_TRIM_FLAGS="--disable-encoders --enable-encoder=aac,libmp3lame,libvorbis,libopus,pcm_s16le,flac --disable-muxers --enable-muxer=mp3,ogg,opus,ipod,mp4,adts,wav,flac,null"
+COPY build/ffmpeg.sh /src/build.sh
+# --enable-gpl se mantiene porque libpostproc (que enlaza ffmpeg-wasm.sh) lo requiere.
+RUN bash -x /src/build.sh \
+      --enable-gpl \
+      --enable-libmp3lame \
+      --enable-libvorbis \
+      --enable-libopus \
+      --enable-zlib \
+      ${FFMPEG_TRIM_FLAGS}
+
+# ---------------------------------------------------------------- ffmpeg.wasm
+FROM ffmpeg-builder AS ffmpeg-wasm-builder
+COPY src/bind /src/src/bind
+COPY src/fftools /src/src/fftools
+COPY build/ffmpeg-wasm.sh build.sh
+ENV FFMPEG_LIBS \
+      -lmp3lame \
+      -logg \
+      -lvorbis \
+      -lvorbisenc \
+      -lvorbisfile \
+      -lopus \
+      -lz
+# Solo la variante ESM (la que usa index.html).
+RUN mkdir -p /src/dist/esm && bash -x /src/build.sh \
+      ${FFMPEG_LIBS} \
+      -sEXPORT_ES6 \
+      -o dist/esm/ffmpeg-core.js
+
+FROM scratch AS exportor
+COPY --from=ffmpeg-wasm-builder /src/dist /dist
